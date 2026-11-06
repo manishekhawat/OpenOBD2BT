@@ -16,6 +16,7 @@
  * transport instead, and `isLikelyBleOnly` flags them so the UI can say so.
  */
 
+import { PermissionsAndroid, Platform } from 'react-native';
 import RNBluetoothClassic, {
   type BluetoothDevice,
 } from 'react-native-bluetooth-classic';
@@ -40,6 +41,29 @@ export function isLikelyBleOnly(name: string): boolean {
   return BLE_ONLY_NAME_HINTS.some((hint) => upper.includes(hint));
 }
 
+/**
+ * Whether Android has granted what a connection needs.
+ *
+ * From Android 12 the Bluetooth calls throw a SecurityException when
+ * BLUETOOTH_CONNECT has not been granted, and that exception surfaces inside
+ * native code where it terminates the process rather than rejecting a promise.
+ * So it is checked before calling, not caught afterwards.
+ */
+export async function hasConnectPermission(): Promise<boolean> {
+  if (Platform.OS !== 'android') return true;
+  // The runtime permission only exists from API 31; before that the install
+  // time permissions in the manifest are enough.
+  if (Number(Platform.Version) < 31) return true;
+
+  try {
+    return await PermissionsAndroid.check(
+      PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function isBluetoothEnabled(): Promise<boolean> {
   try {
     return await RNBluetoothClassic.isBluetoothEnabled();
@@ -50,6 +74,9 @@ export async function isBluetoothEnabled(): Promise<boolean> {
 
 /** Devices Android already has a pairing record for. */
 export async function listPaired(): Promise<AdapterCandidate[]> {
+  // Listing bonded devices needs the same permission as connecting to them.
+  if (!(await hasConnectPermission())) return [];
+
   const devices = await RNBluetoothClassic.getBondedDevices();
   return devices.map((d) => ({
     id: d.address,
@@ -61,6 +88,14 @@ export async function listPaired(): Promise<AdapterCandidate[]> {
 
 /** Discover unpaired devices in range. Requires BLUETOOTH_SCAN on Android 12+. */
 export async function discoverClassic(): Promise<AdapterCandidate[]> {
+  if (!(await hasConnectPermission())) {
+    throw new TransportError(
+      'bt-classic',
+      'Bluetooth permission has not been granted',
+      'Allow the Nearby devices permission, then scan again.',
+    );
+  }
+
   const devices = await RNBluetoothClassic.startDiscovery();
   return devices.map((d) => ({
     id: d.address,
@@ -97,6 +132,24 @@ export class BluetoothClassicTransport implements Transport {
   }
 
   async open(events: TransportEvents): Promise<void> {
+    // Without the native module there is nothing to call, and calling into it
+    // anyway takes the whole app down rather than failing here.
+    if (!RNBluetoothClassic || typeof RNBluetoothClassic.connectToDevice !== 'function') {
+      throw new TransportError(
+        this.kind,
+        'Bluetooth support is unavailable in this build',
+        'The Bluetooth module did not load. Reinstalling the app usually clears this.',
+      );
+    }
+
+    if (!(await hasConnectPermission())) {
+      throw new TransportError(
+        this.kind,
+        'Bluetooth permission has not been granted',
+        'Android needs the Nearby devices permission before an app can open a Bluetooth connection. Allow it when asked, or turn it on in Settings under Apps, OBD Scout, Permissions.',
+      );
+    }
+
     if (!(await isBluetoothEnabled())) {
       throw new TransportError(
         this.kind,
@@ -119,7 +172,11 @@ export class BluetoothClassicTransport implements Transport {
           connectorType: 'rfcomm',
           delimiter: PROMPT,
           charset: 'ascii',
-          secureSocket: attempt.secure,
+          // The native option is keyed "secure", not "secureSocket" — the
+          // longer name is the enum's own identifier, not its JSON key, and
+          // passing it means the value is dropped and the default (secure)
+          // silently applies. Which defeats the whole point of the fallback.
+          secure: attempt.secure,
         });
         break;
       } catch (err) {
@@ -136,11 +193,22 @@ export class BluetoothClassicTransport implements Transport {
       );
     }
 
-    this.subscription = this.device.onDataReceived((event) => {
-      // The delimiter is consumed by the native layer; put it back so the
-      // ELM327 layer still sees a complete prompt-terminated response.
-      events.onData(event.data + PROMPT);
-    });
+    try {
+      this.subscription = this.device.onDataReceived((event) => {
+        // The delimiter is consumed by the native layer; put it back so the
+        // ELM327 layer still sees a complete prompt-terminated response.
+        events.onData(event.data + PROMPT);
+      });
+    } catch (err) {
+      // A connection with nothing listening to it is useless and would hang
+      // every command, so close it rather than leaving it half-open.
+      await this.close();
+      throw new TransportError(
+        this.kind,
+        'Connected, but could not listen for replies',
+        err instanceof Error ? err.message : undefined,
+      );
+    }
 
     this.open_ = true;
   }

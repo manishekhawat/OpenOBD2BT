@@ -91,6 +91,13 @@ export function ConnectScreen() {
 
   const handleConnect = async (candidate: AdapterCandidate) => {
     clearError();
+    // Ask again at the point of use: the permission may have been dismissed
+    // when the screen opened, and connecting without it is what Android
+    // punishes hardest.
+    const granted = await requestBluetoothPermissions();
+    setPermissionDenied(!granted);
+    if (!granted) return;
+
     const ok = await connectTo(candidate);
     if (ok) navigation.goBack();
   };

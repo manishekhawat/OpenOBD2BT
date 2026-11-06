@@ -17,7 +17,11 @@ import { useVehicles } from '@/state/vehicles';
 
 import { Navigation } from '@/ui/navigation';
 import { Body, Title } from '@/ui/components/primitives';
+import { ErrorBoundary, installGlobalErrorHandler } from '@/ui/components/ErrorBoundary';
 import { space, usePalette } from '@/ui/theme';
+
+// Installed before anything renders, so an error during startup is caught too.
+installGlobalErrorHandler();
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -42,11 +46,13 @@ export default function App() {
   if (!ready) return <Boot />;
 
   return (
-    <SafeAreaProvider>
-      <StatusBar style="auto" />
-      <Navigation />
-      {error ? <StorageWarning message={error} /> : null}
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <StatusBar style="auto" />
+        <Navigation />
+        {error ? <StorageWarning message={error} /> : null}
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }
 
