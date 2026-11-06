@@ -202,13 +202,25 @@ export class ObdSession {
     });
     this.elm = elm;
 
+    // These run from native callbacks, where a thrown error has no caller to
+    // catch it and ends the process. Everything inside is guarded.
     await transport.open({
-      onData: (chunk) => elm.ingest(chunk),
+      onData: (chunk) => {
+        try {
+          elm.ingest(chunk);
+        } catch (err) {
+          this.addTrace('info', `Could not parse a reply: ${String(err)}`);
+        }
+      },
       onClose: (reason) => {
-        elm.fail(reason);
-        this.stopPolling();
-        this.setStatus({ state: 'closed', message: reason });
-        this.addTrace('info', `Link closed: ${reason}`);
+        try {
+          elm.fail(reason);
+          this.stopPolling();
+          this.setStatus({ state: 'closed', message: reason });
+          this.addTrace('info', `Link closed: ${reason}`);
+        } catch {
+          // Already closing; nothing useful remains to do.
+        }
       },
     });
 

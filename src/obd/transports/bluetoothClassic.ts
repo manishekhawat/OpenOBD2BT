@@ -17,9 +17,7 @@
  */
 
 import { PermissionsAndroid, Platform } from 'react-native';
-import RNBluetoothClassic, {
-  type BluetoothDevice,
-} from 'react-native-bluetooth-classic';
+import type { BluetoothDevice } from 'react-native-bluetooth-classic';
 
 import {
   type AdapterCandidate,
@@ -27,6 +25,58 @@ import {
   type TransportEvents,
   TransportError,
 } from '../transport';
+
+/**
+ * The native library is loaded on first use rather than imported at the top.
+ *
+ * A module that throws while loading takes the whole bundle down with it, and
+ * at that point no error boundary has mounted — the app simply closes with no
+ * explanation. Deferring the load means a library that cannot initialise
+ * breaks only the transport that needs it, reports why, and leaves the rest of
+ * the app working. `import type` above is erased at compile time, so this file
+ * pulls in nothing at load.
+ */
+type BluetoothClassicModule = typeof import('react-native-bluetooth-classic').default;
+
+let cached: BluetoothClassicModule | null = null;
+let loadFailure: string | null = null;
+
+function native(): BluetoothClassicModule {
+  if (cached) return cached;
+
+  if (loadFailure === null) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+      const loaded = require('react-native-bluetooth-classic') as {
+        default?: BluetoothClassicModule;
+      };
+      if (!loaded.default || typeof loaded.default.getBondedDevices !== 'function') {
+        loadFailure = 'The Bluetooth module loaded but is missing its methods.';
+      } else {
+        cached = loaded.default;
+        return cached;
+      }
+    } catch (err) {
+      loadFailure = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  throw new TransportError(
+    'bt-classic',
+    'Bluetooth support could not start',
+    `${loadFailure} Bluetooth LE and Wi-Fi adapters are unaffected, and the demo vehicle still works.`,
+  );
+}
+
+/** Whether the native library is usable, without throwing. For diagnostics. */
+export function bluetoothModuleStatus(): { ok: boolean; reason: string | null } {
+  try {
+    native();
+    return { ok: true, reason: null };
+  } catch {
+    return { ok: false, reason: loadFailure };
+  }
+}
 
 /** The library strips this delimiter, so it is re-appended on the way through. */
 const PROMPT = '>';
@@ -66,7 +116,7 @@ export async function hasConnectPermission(): Promise<boolean> {
 
 export async function isBluetoothEnabled(): Promise<boolean> {
   try {
-    return await RNBluetoothClassic.isBluetoothEnabled();
+    return await native().isBluetoothEnabled();
   } catch {
     return false;
   }
@@ -77,7 +127,7 @@ export async function listPaired(): Promise<AdapterCandidate[]> {
   // Listing bonded devices needs the same permission as connecting to them.
   if (!(await hasConnectPermission())) return [];
 
-  const devices = await RNBluetoothClassic.getBondedDevices();
+  const devices = await native().getBondedDevices();
   return devices.map((d) => ({
     id: d.address,
     name: d.name || d.address,
@@ -96,7 +146,7 @@ export async function discoverClassic(): Promise<AdapterCandidate[]> {
     );
   }
 
-  const devices = await RNBluetoothClassic.startDiscovery();
+  const devices = await native().startDiscovery();
   return devices.map((d) => ({
     id: d.address,
     name: d.name || d.address,
@@ -107,7 +157,7 @@ export async function discoverClassic(): Promise<AdapterCandidate[]> {
 
 export async function cancelDiscovery(): Promise<void> {
   try {
-    await RNBluetoothClassic.cancelDiscovery();
+    await native().cancelDiscovery();
   } catch {
     // Discovery may already have finished; nothing to do.
   }
@@ -132,15 +182,9 @@ export class BluetoothClassicTransport implements Transport {
   }
 
   async open(events: TransportEvents): Promise<void> {
-    // Without the native module there is nothing to call, and calling into it
-    // anyway takes the whole app down rather than failing here.
-    if (!RNBluetoothClassic || typeof RNBluetoothClassic.connectToDevice !== 'function') {
-      throw new TransportError(
-        this.kind,
-        'Bluetooth support is unavailable in this build',
-        'The Bluetooth module did not load. Reinstalling the app usually clears this.',
-      );
-    }
+    // Load the native library first: if it cannot start, this throws a
+    // readable error here rather than failing somewhere less obvious later.
+    native();
 
     if (!(await hasConnectPermission())) {
       throw new TransportError(
@@ -168,7 +212,7 @@ export class BluetoothClassicTransport implements Transport {
     let lastError: unknown = null;
     for (const attempt of attempts) {
       try {
-        this.device = await RNBluetoothClassic.connectToDevice(this.id, {
+        this.device = await native().connectToDevice(this.id, {
           connectorType: 'rfcomm',
           delimiter: PROMPT,
           charset: 'ascii',

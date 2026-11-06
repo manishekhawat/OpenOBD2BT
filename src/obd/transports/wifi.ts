@@ -6,13 +6,57 @@
  * fixed address, almost always 192.168.0.10:35000 or 192.168.4.1:35000.
  */
 
-import TcpSocket from 'react-native-tcp-socket';
+import type TcpSocketType from 'react-native-tcp-socket';
 
 import {
   type Transport,
   type TransportEvents,
   TransportError,
 } from '../transport';
+
+/**
+ * Loaded on first use. A library that throws while loading would otherwise
+ * take the whole bundle down before anything could report it.
+ */
+type TcpModule = typeof TcpSocketType;
+
+let cached: TcpModule | null = null;
+let loadFailure: string | null = null;
+
+function tcp(): TcpModule {
+  if (cached) return cached;
+
+  if (loadFailure === null) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+      const loaded = require('react-native-tcp-socket') as { default?: TcpModule };
+      if (!loaded.default || typeof loaded.default.createConnection !== 'function') {
+        loadFailure = 'The networking module loaded but is missing its methods.';
+      } else {
+        cached = loaded.default;
+        return cached;
+      }
+    } catch (err) {
+      loadFailure = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  throw new TransportError(
+    'wifi',
+    'Wi-Fi support could not start',
+    `${loadFailure} Bluetooth adapters are unaffected.`,
+  );
+}
+
+/** Whether the native library is usable, without throwing. For diagnostics. */
+export function wifiModuleStatus(): { ok: boolean; reason: string | null } {
+  try {
+    tcp();
+    return { ok: true, reason: null };
+  } catch {
+    return { ok: false, reason: loadFailure };
+  }
+}
 
 /** Addresses worth trying when the user does not know theirs. */
 export const COMMON_WIFI_ENDPOINTS = [
@@ -22,7 +66,7 @@ export const COMMON_WIFI_ENDPOINTS = [
   { host: '192.168.0.10', port: 23, note: 'Adapters on the telnet port' },
 ] as const;
 
-type Socket = ReturnType<typeof TcpSocket.createConnection>;
+type Socket = ReturnType<TcpModule["createConnection"]>;
 
 export class WifiTransport implements Transport {
   readonly kind = 'wifi' as const;
@@ -66,7 +110,7 @@ export class WifiTransport implements Transport {
         );
       }, 8000);
 
-      const socket = TcpSocket.createConnection(
+      const socket = tcp().createConnection(
         { host: this.host, port: this.port, tls: false },
         () => {
           if (settled) return;

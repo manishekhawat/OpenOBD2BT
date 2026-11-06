@@ -97,14 +97,22 @@ export class Elm327 {
     this.settle(complete);
   }
 
-  /** The link dropped: fail anything in flight so callers do not hang. */
+  /**
+   * The link dropped: finish anything in flight so callers do not hang.
+   *
+   * Resolved as a timeout rather than rejected. A rejection here can easily
+   * end up with nothing awaiting it — the link drops precisely when callers
+   * are being torn down — and an unhandled rejection is fatal in a release
+   * build. Callers already treat a timeout as "the adapter stopped answering",
+   * which is exactly what happened.
+   */
   fail(reason: string): void {
     this.closed = true;
     const p = this.pending;
     this.pending = null;
     if (p) {
       clearTimeout(p.timer);
-      p.reject(new Error(reason));
+      p.resolve({ kind: 'timeout', raw: reason, lines: [] });
     }
   }
 

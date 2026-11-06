@@ -10,7 +10,7 @@
  * nobody has catalogued.
  */
 
-import { BleManager, type Characteristic, type Device } from 'react-native-ble-plx';
+import type { BleManager, Characteristic, Device } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 
 import {
@@ -28,11 +28,51 @@ const KNOWN_PROFILES = [
   { service: '0000ffe5-0000-1000-8000-00805f9b34fb', notify: '0000ffe4-0000-1000-8000-00805f9b34fb', write: '0000ffe9-0000-1000-8000-00805f9b34fb' },
 ] as const;
 
+/**
+ * The manager is created on first use, from a deferred require.
+ *
+ * Loading the library at the top of the file means a failure to initialise
+ * takes the whole bundle down before anything can report it. Deferring keeps
+ * the failure contained to Bluetooth LE.
+ */
 let manager: BleManager | null = null;
+let loadFailure: string | null = null;
 
 function ble(): BleManager {
-  if (!manager) manager = new BleManager();
-  return manager;
+  if (manager) return manager;
+
+  if (loadFailure === null) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, global-require
+      const loaded = require('react-native-ble-plx') as {
+        BleManager?: new () => BleManager;
+      };
+      if (typeof loaded.BleManager !== 'function') {
+        loadFailure = 'The Bluetooth LE module loaded but is missing its manager.';
+      } else {
+        manager = new loaded.BleManager();
+        return manager;
+      }
+    } catch (err) {
+      loadFailure = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  throw new TransportError(
+    'ble',
+    'Bluetooth LE support could not start',
+    `${loadFailure} Classic Bluetooth and Wi-Fi adapters are unaffected.`,
+  );
+}
+
+/** Whether the native library is usable, without throwing. For diagnostics. */
+export function bleModuleStatus(): { ok: boolean; reason: string | null } {
+  try {
+    ble();
+    return { ok: true, reason: null };
+  } catch {
+    return { ok: false, reason: loadFailure };
+  }
 }
 
 /** Scan for nearby LE devices for `durationMs`, de-duplicated by id. */

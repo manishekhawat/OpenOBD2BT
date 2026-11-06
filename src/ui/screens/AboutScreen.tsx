@@ -10,6 +10,9 @@ import { View } from 'react-native';
 
 import { allCatalogCodes } from '@/data/dtcCatalog';
 import { PID_DEFINITIONS } from '@/obd/pids';
+import { bluetoothModuleStatus } from '@/obd/transports/bluetoothClassic';
+import { bleModuleStatus } from '@/obd/transports/ble';
+import { wifiModuleStatus } from '@/obd/transports/wifi';
 
 import {
   Body,
@@ -22,6 +25,57 @@ import {
   Title,
 } from '../components/primitives';
 import { space, type, usePalette } from '../theme';
+
+/**
+ * Whether each connection library actually started.
+ *
+ * They are loaded on demand, so one failing breaks only its own transport.
+ * Showing which is which turns "it will not connect" into something specific.
+ */
+function ModuleStatus() {
+  const palette = usePalette();
+
+  const modules = [
+    { name: 'Bluetooth', status: bluetoothModuleStatus() },
+    { name: 'Bluetooth LE', status: bleModuleStatus() },
+    { name: 'Wi-Fi', status: wifiModuleStatus() },
+  ];
+
+  const broken = modules.filter((m) => !m.status.ok);
+
+  return (
+    <>
+      <Panel>
+        {modules.map((module, index) => (
+          <View key={module.name}>
+            {index > 0 ? <Divider /> : null}
+            <Field
+              label={module.name}
+              value={
+                <Label
+                  style={{
+                    color: module.status.ok ? palette.green : palette.red,
+                    fontWeight: '600',
+                  }}
+                >
+                  {module.status.ok ? 'Available' : 'Unavailable'}
+                </Label>
+              }
+            />
+          </View>
+        ))}
+      </Panel>
+
+      {broken.length > 0 ? (
+        <Panel tone="high" style={{ marginTop: space.base }}>
+          <Label style={{ lineHeight: 19 }}>
+            {broken.map((m) => `${m.name}: ${m.status.reason ?? 'did not start'}`).join('\n\n')}
+          </Label>
+        </Panel>
+      ) : null}
+    </>
+  );
+}
 
 export function AboutScreen() {
   const palette = usePalette();
@@ -80,6 +134,9 @@ export function AboutScreen() {
         </Body>
       </Panel>
 
+      <SectionHeader>Connection support</SectionHeader>
+      <ModuleStatus />
+
       <SectionHeader>Built in</SectionHeader>
       <Panel>
         <Field label="Live parameters" value={String(PID_DEFINITIONS.length)} />
@@ -91,7 +148,7 @@ export function AboutScreen() {
         <Field label="Protocols" value="CAN 11/29-bit, ISO 9141-2, KWP2000, J1850" />
       </Panel>
 
-      <Panel tone="high" style={{ marginTop: space.wide }}>
+      <Panel tone="high" style={{ marginTop: space.section }}>
         <Label style={{ lineHeight: 19 }}>
           Clearing fault codes erases evidence a mechanic may need, and resets the emission readiness
           monitors — which can mean failing an emissions test until the vehicle has been driven
