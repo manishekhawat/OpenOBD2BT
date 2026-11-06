@@ -7,3 +7,7 @@ android/build/
 android/app/build/
 android/.gradle/
 android/local.properties
+
+# Build outputs never belong in the source branch.
+*.apk
+dist/
