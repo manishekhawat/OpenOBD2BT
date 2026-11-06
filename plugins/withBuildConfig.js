@@ -1,39 +1,44 @@
 /**
  * Re-enable BuildConfig generation for library modules that still need it.
  *
- * Android Gradle Plugin 8 stopped generating a `BuildConfig` class for library
- * modules by default, and AGP 9 removed the global
- * `android.defaults.buildfeatures.buildconfig` property that used to turn it
- * back on. `react-native-bluetooth-classic` imports
- * `kjd.reactnative.bluetooth.BuildConfig` to read `BuildConfig.DEBUG`, so
- * without this the release build fails with "cannot find symbol: BuildConfig".
+ * `react-native-bluetooth-classic` imports `kjd.reactnative.bluetooth.BuildConfig`
+ * to read `BuildConfig.DEBUG`. Android Gradle Plugin 8 stopped generating that
+ * class for library modules by default, and AGP 9 removed the global
+ * `android.defaults.buildfeatures.buildconfig` property that used to switch it
+ * back on — leaving that property set now fails the build outright.
  *
- * The remaining way to do it is per module, so this appends a `subprojects`
- * block to the root build.gradle that switches the feature on for every Android
- * module. Doing it as a config plugin keeps it in place across `expo prebuild`.
+ * So it has to be set per module. The hook goes in settings.gradle rather than
+ * the root build.gradle: settings is fully evaluated before any project is, so
+ * `beforeProject` is guaranteed to run early enough. Appending the equivalent
+ * to the root build.gradle instead fails with "Cannot run
+ * Project.afterEvaluate when the project is already evaluated", because the
+ * React Native root plugin has evaluated the subprojects by that point.
+ *
+ * `plugins.withId` is used rather than a direct extension lookup so the change
+ * applies whenever the Android plugin is applied, without depending on module
+ * evaluation order.
  */
 
-const { withProjectBuildGradle, withGradleProperties } = require('expo/config-plugins');
+const { withSettingsGradle, withGradleProperties } = require('expo/config-plugins');
 
-const MARKER = '// obd-scout: enable BuildConfig for library modules';
+const MARKER = '// obd-scout: enable BuildConfig for Android modules';
 const STALE_PROPERTY = 'android.defaults.buildfeatures.buildconfig';
 
 const SNIPPET = `
 ${MARKER}
 // react-native-bluetooth-classic imports BuildConfig, which AGP no longer
 // generates for libraries unless asked. AGP 9 removed the global property for
-// this, so it has to be set per module.
-subprojects { subproject ->
-    subproject.afterEvaluate {
-        def androidExtension = subproject.extensions.findByName("android")
-        if (androidExtension != null) {
-            androidExtension.buildFeatures.buildConfig = true
+// this, so it is set per module here, before any project is evaluated.
+gradle.beforeProject { project ->
+    ["com.android.library", "com.android.application"].each { pluginId ->
+        project.plugins.withId(pluginId) {
+            project.extensions.getByName("android").buildFeatures.buildConfig = true
         }
     }
 }
 `;
 
-/** Drop the property AGP 9 removed — leaving it in is a hard build failure. */
+/** Drop the property AGP 9 removed — leaving it set is a hard build failure. */
 function removeStaleProperty(config) {
   return withGradleProperties(config, (gradleConfig) => {
     gradleConfig.modResults = gradleConfig.modResults.filter(
@@ -49,11 +54,11 @@ function removeStaleProperty(config) {
   });
 }
 
-function addSubprojectsBlock(config) {
-  return withProjectBuildGradle(config, (gradleConfig) => {
+function addBeforeProjectHook(config) {
+  return withSettingsGradle(config, (gradleConfig) => {
     if (gradleConfig.modResults.language !== 'groovy') {
       throw new Error(
-        'withBuildConfig expects a Groovy root build.gradle; the template appears to have changed.',
+        'withBuildConfig expects a Groovy settings.gradle; the template appears to have changed.',
       );
     }
     // Keep it idempotent — prebuild can run over an existing project.
@@ -65,5 +70,5 @@ function addSubprojectsBlock(config) {
 }
 
 module.exports = function withBuildConfig(config) {
-  return addSubprojectsBlock(removeStaleProperty(config));
+  return addBeforeProjectHook(removeStaleProperty(config));
 };

@@ -37,3 +37,15 @@ expoAutolinking.useExpoVersionCatalog()
 
 include ':app'
 includeBuild(expoAutolinking.reactNativeGradlePlugin)
+
+// obd-scout: enable BuildConfig for Android modules
+// react-native-bluetooth-classic imports BuildConfig, which AGP no longer
+// generates for libraries unless asked. AGP 9 removed the global property for
+// this, so it is set per module here, before any project is evaluated.
+gradle.beforeProject { project ->
+    ["com.android.library", "com.android.application"].each { pluginId ->
+        project.plugins.withId(pluginId) {
+            project.extensions.getByName("android").buildFeatures.buildConfig = true
+        }
+    }
+}
