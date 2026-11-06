@@ -23,3 +23,16 @@ allprojects {
 
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"
+
+// obd-scout: enable BuildConfig for library modules
+// react-native-bluetooth-classic imports BuildConfig, which AGP no longer
+// generates for libraries unless asked. AGP 9 removed the global property for
+// this, so it has to be set per module.
+subprojects { subproject ->
+    subproject.afterEvaluate {
+        def androidExtension = subproject.extensions.findByName("android")
+        if (androidExtension != null) {
+            androidExtension.buildFeatures.buildConfig = true
+        }
+    }
+}
