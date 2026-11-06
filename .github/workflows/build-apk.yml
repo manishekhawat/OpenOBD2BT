@@ -8,6 +8,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -123,3 +126,33 @@ jobs:
           path: ${{ steps.rename.outputs.path }}
           if-no-files-found: error
           retention-days: 30
+
+      # Artifacts are served from blob storage, which is not reachable
+      # everywhere. Publishing the APK to an orphan branch as well makes it
+      # retrievable over plain git, which is reachable anywhere the repo is.
+      # The branch is rewritten each build so it never accumulates binaries.
+      - name: Publish the APK to the builds branch
+        run: |
+          APK="${{ steps.rename.outputs.path }}"
+          cp "$APK" /tmp/"$(basename "$APK")"
+
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+          git checkout --orphan builds-tmp
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          cp /tmp/*.apk .
+
+          {
+            echo "# Build output"
+            echo
+            echo "APK built from commit \`${GITHUB_SHA}\` on $(date -u +'%Y-%m-%d %H:%M UTC')."
+            echo
+            echo "Signed with the debug keystore, so it installs by sideloading"
+            echo "but is not suitable for distribution through the Play Store."
+          } > README.md
+
+          git add -f ./*.apk README.md
+          git commit -q -m "APK from ${GITHUB_SHA:0:7}"
+          git push -f origin builds-tmp:builds
+          ls -lh ./*.apk
