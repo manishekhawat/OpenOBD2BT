@@ -55,21 +55,30 @@ jobs:
           echo "--- platforms across all channels (canary included) ---"
           "$SDKMANAGER" --list --channel=3 2>/dev/null | grep -oE 'platforms;android-[A-Za-z0-9.]+' | sort -u | tee /tmp/all.txt | tail -8
 
-          if grep -qx 'platforms;android-37' /tmp/all.txt; then
-            TARGET='platforms;android-37'
-            CHANNEL='--channel=3'
+          # Android now publishes minor API levels, so API 37 is packaged as
+          # android-37.0, android-37.1 and so on rather than a bare android-37.
+          # Every 37.x is installed, because which minor AGP resolves to depends
+          # on the compileSdkMinor it defaults to.
+          API37=$(grep -E 'platforms;android-37(\.[0-9]+)?$' /tmp/all.txt || true)
+
+          if [ -n "$API37" ]; then
+            echo "Found API 37 on the preview channel:"
+            echo "$API37"
+            for package in $API37; do
+              echo "Installing $package"
+              yes | "$SDKMANAGER" --channel=3 "$package" 2>&1 | tail -2 || true
+            done
+            LEVEL=37
           else
-            TARGET=$(grep -E 'platforms;android-[0-9]+$' /tmp/all.txt | sort -t- -k2 -n | tail -1)
-            CHANNEL=''
+            TARGET=$(grep -E 'platforms;android-[0-9]+(\.[0-9]+)?$' /tmp/all.txt | sort -V | tail -1)
             echo "API 37 is not published on any channel; falling back to $TARGET"
+            yes | "$SDKMANAGER" "$TARGET" 2>&1 | tail -2 || true
+            LEVEL=$(echo "$TARGET" | grep -oE '[0-9]+' | tail -1)
           fi
 
-          echo "Installing $TARGET $CHANNEL"
-          yes | "$SDKMANAGER" $CHANNEL "$TARGET" 2>&1 | tail -3 || true
-
-          LEVEL=$(echo "$TARGET" | grep -oE '[0-9]+$')
           echo "ANDROID_COMPILE_SDK=$LEVEL" >> "$GITHUB_ENV"
           echo "Resolved compile SDK: $LEVEL"
+          ls "$ANDROID_HOME/platforms" || true
 
       - name: Install dependencies
         run: npm ci
