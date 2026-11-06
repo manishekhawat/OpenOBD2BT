@@ -26,11 +26,15 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      # No package pin: Expo's modules decide which API level they need, and
-      # the Android Gradle Plugin downloads whatever is missing once the
-      # licences are accepted. Pinning here only risks disagreeing with them.
+      # The package list has to be given explicitly: the action's own default
+      # includes the obsolete 'tools' package, which no longer exists in the
+      # repository and makes sdkmanager exit 1. Only the platform Expo needs is
+      # pinned here — the Android Gradle Plugin downloads matching build-tools
+      # itself once the licences are accepted.
       - name: Set up the Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-37'
 
       - name: Install dependencies
         run: npm ci
