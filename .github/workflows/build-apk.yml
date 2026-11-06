@@ -46,20 +46,26 @@ jobs:
           [ -x "$SDKMANAGER" ] || SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -1)
           echo "Using $SDKMANAGER"
 
-          echo "--- platforms offered by the repository ---"
-          "$SDKMANAGER" --list 2>/dev/null | grep -oE 'platforms;android-[A-Za-z0-9.]+' | sort -u | tee /tmp/platforms.txt
+          # Expo 58 needs API 37, which the stable channel does not carry.
+          # Channel 3 includes canary, beta and dev as well as stable, so this
+          # finds a preview platform if that is where 37 lives.
+          echo "--- platforms on the stable channel ---"
+          "$SDKMANAGER" --list 2>/dev/null | grep -oE 'platforms;android-[A-Za-z0-9.]+' | sort -u | tee /tmp/stable.txt | tail -4
 
-          echo "--- build-tools offered ---"
-          "$SDKMANAGER" --list 2>/dev/null | grep -oE 'build-tools;[0-9.]+' | sort -uV | tail -5
+          echo "--- platforms across all channels (canary included) ---"
+          "$SDKMANAGER" --list --channel=3 2>/dev/null | grep -oE 'platforms;android-[A-Za-z0-9.]+' | sort -u | tee /tmp/all.txt | tail -8
 
-          # Prefer 37 if it exists; otherwise take the highest numbered platform.
-          if grep -qx 'platforms;android-37' /tmp/platforms.txt; then
+          if grep -qx 'platforms;android-37' /tmp/all.txt; then
             TARGET='platforms;android-37'
+            CHANNEL='--channel=3'
           else
-            TARGET=$(grep -E 'platforms;android-[0-9]+$' /tmp/platforms.txt | sort -t- -k2 -n | tail -1)
+            TARGET=$(grep -E 'platforms;android-[0-9]+$' /tmp/all.txt | sort -t- -k2 -n | tail -1)
+            CHANNEL=''
+            echo "API 37 is not published on any channel; falling back to $TARGET"
           fi
-          echo "Installing $TARGET"
-          yes | "$SDKMANAGER" "$TARGET" >/dev/null 2>&1 || true
+
+          echo "Installing $TARGET $CHANNEL"
+          yes | "$SDKMANAGER" $CHANNEL "$TARGET" 2>&1 | tail -3 || true
 
           LEVEL=$(echo "$TARGET" | grep -oE '[0-9]+$')
           echo "ANDROID_COMPILE_SDK=$LEVEL" >> "$GITHUB_ENV"
