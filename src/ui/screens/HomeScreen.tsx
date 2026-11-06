@@ -226,6 +226,7 @@ export function HomeScreen() {
 
       {connected ? (
         <View style={{ gap: space.small, marginTop: space.wide }}>
+          <Button label="Run a health check" onPress={() => navigation.navigate('Health')} tone="neutral" />
           <Button label="Vehicle information" onPress={() => navigation.navigate('VehicleInfo')} tone="quiet" />
           <Button label="Scan history" onPress={() => navigation.navigate('History')} tone="quiet" />
         </View>

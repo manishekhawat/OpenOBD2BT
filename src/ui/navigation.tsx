@@ -23,6 +23,9 @@ import { TripsScreen } from './screens/TripsScreen';
 import { MoreScreen } from './screens/MoreScreen';
 
 import { ConnectScreen } from './screens/ConnectScreen';
+import { HealthScreen } from './screens/HealthScreen';
+import { TestResultsScreen } from './screens/TestResultsScreen';
+import { InspectionScreen } from './screens/InspectionScreen';
 import { FaultDetailScreen } from './screens/FaultDetailScreen';
 import { HistoryScreen } from './screens/HistoryScreen';
 import { ScanDetailScreen } from './screens/ScanDetailScreen';
@@ -45,6 +48,9 @@ import { AboutScreen } from './screens/AboutScreen';
 export type RootStackParamList = {
   Tabs: undefined;
   Connect: undefined;
+  Health: undefined;
+  TestResults: undefined;
+  Inspection: undefined;
   FaultDetail: { code: string };
   History: undefined;
   ScanDetail: { scanId: number };
@@ -164,6 +170,9 @@ export function Navigation() {
       >
         <Stack.Screen name="Tabs" component={Tabs} options={{ headerShown: false }} />
         <Stack.Screen name="Connect" component={ConnectScreen} options={{ title: 'Connect adapter' }} />
+        <Stack.Screen name="Health" component={HealthScreen} options={{ title: 'Vehicle health' }} />
+        <Stack.Screen name="TestResults" component={TestResultsScreen} options={{ title: 'Monitor tests' }} />
+        <Stack.Screen name="Inspection" component={InspectionScreen} options={{ title: 'Inspection' }} />
         <Stack.Screen name="FaultDetail" component={FaultDetailScreen} options={{ title: 'Fault' }} />
         <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'Scan history' }} />
         <Stack.Screen name="ScanDetail" component={ScanDetailScreen} options={{ title: 'Saved scan' }} />

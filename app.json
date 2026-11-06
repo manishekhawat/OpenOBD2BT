@@ -24,13 +24,13 @@
         "android.permission.ACCESS_WIFI_STATE",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_LOCATION",
-        "android.permission.POST_NOTIFICATIONS",
         "android.permission.VIBRATE",
         "android.permission.WAKE_LOCK"
       ]
     },
     "plugins": [
       "./plugins/withBuildConfig",
+      "./plugins/withAbiSplit",
       [
         "expo-build-properties",
         {

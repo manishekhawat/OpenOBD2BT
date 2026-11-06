@@ -16,6 +16,7 @@ import {
 } from './framing';
 import { decodeDtcPayload, type DecodedDtc, type DtcOrigin } from './dtc';
 import { decodeReadiness, type ReadinessReport } from './monitors';
+import { decodeTestResults, MID_SUPPORT_BLOCKS, type TestResult } from './mode06';
 import {
   decodeSupportBitmap,
   reportsNextBlock,
@@ -75,6 +76,32 @@ export interface ScanResult {
 
 /** How many poll ticks to skip between reads, by rate class. */
 const RATE_DIVISOR: Record<PidRate, number> = { fast: 1, medium: 3, slow: 10 };
+
+/**
+ * Order of the in-use performance counters, which the standard fixes.
+ * Each pair is a count of completions over a count of opportunities.
+ */
+const SPARK_COUNTER_LABELS = [
+  'Monitoring conditions vs ignition cycles',
+  'Catalyst bank 1',
+  'Catalyst bank 2',
+  'Oxygen sensor bank 1',
+  'Oxygen sensor bank 2',
+  'Evaporative system',
+  'Exhaust gas recirculation',
+  'Secondary air system',
+] as const;
+
+const COMPRESSION_COUNTER_LABELS = [
+  'Monitoring conditions vs ignition cycles',
+  'NMHC catalyst',
+  'NOx after-treatment',
+  'NOx adsorber',
+  'Particulate filter',
+  'Exhaust gas sensor',
+  'Boost pressure',
+  'Exhaust gas recirculation',
+] as const;
 
 const MAX_TRACE = 500;
 
@@ -493,6 +520,117 @@ export class ObdSession {
   async readReadiness(): Promise<ReadinessReport | null> {
     const data = await this.readRaw(1, 0x01);
     return data ? decodeReadiness(data) : null;
+  }
+
+  /** Readiness for the current drive cycle rather than since codes were cleared. */
+  async readDriveCycleReadiness(): Promise<ReadinessReport | null> {
+    if (!this.supportedPids.includes(0x41)) return null;
+    const data = await this.readRaw(1, 0x41);
+    return data ? decodeReadiness(data) : null;
+  }
+
+  // --- on-board monitoring test results (service 06) ----------------------
+
+  /**
+   * Read the measurements behind the readiness monitors.
+   *
+   * The vehicle advertises which monitor IDs it supports through the same kind
+   * of bitmap chain used for live parameters, so only supported monitors are
+   * asked for. Each one is requested separately because an ECU answers per
+   * monitor, and a single monitor can return several tests.
+   */
+  async readTestResults(): Promise<TestResult[]> {
+    const supported = await this.discoverTestMonitors();
+    if (supported.length === 0) return [];
+
+    const results: TestResult[] = [];
+    for (const mid of supported) {
+      const reply = await this.request(0x06, mid, 5000);
+      if (!reply || reply.kind !== 'ok') continue;
+
+      const responses = assembleResponses(reply.lines, this.status.family);
+      for (const response of responses) {
+        // Service 06 echoes the monitor ID as the first payload byte, which
+        // decodeTestResults expects to still be in place.
+        const payload = payloadFor(response, 0x06);
+        if (!payload || payload.length < 9) continue;
+        results.push(...decodeTestResults(payload));
+      }
+    }
+
+    this.addTrace('info', `${results.length} monitor test results read`);
+    return results;
+  }
+
+  /** Walk the service 06 support bitmaps to find which monitors answer. */
+  private async discoverTestMonitors(): Promise<number[]> {
+    const supported: number[] = [];
+
+    for (const base of MID_SUPPORT_BLOCKS) {
+      const reply = await this.request(0x06, base, 4000);
+      if (!reply || reply.kind !== 'ok') break;
+
+      const responses = assembleResponses(reply.lines, this.status.family);
+      let block: number[] = [];
+      for (const response of responses) {
+        const payload = payloadFor(response, 0x06);
+        // The bitmap follows the echoed monitor ID.
+        if (!payload || payload.length < 5 || payload[0] !== base) continue;
+        block = [...new Set([...block, ...decodeSupportBitmap(base, payload.slice(1))])];
+      }
+      if (block.length === 0) break;
+
+      supported.push(...block);
+      if (!block.includes(base + 0x20)) break;
+    }
+
+    return [...new Set(supported)]
+      .filter((mid) => !(MID_SUPPORT_BLOCKS as readonly number[]).includes(mid))
+      .sort((a, b) => a - b);
+  }
+
+  /**
+   * In-use performance tracking (service 09 PIDs 08 and 0B).
+   *
+   * Counts of how often each monitor has actually completed against how often
+   * conditions allowed it to. A monitor that never completes in real driving
+   * shows up here and nowhere else.
+   */
+  async readPerformanceCounters(): Promise<{ label: string; numerator: number; denominator: number }[]> {
+    const pid = this.supportedInfoPids.includes(0x08)
+      ? 0x08
+      : this.supportedInfoPids.includes(0x0b)
+        ? 0x0b
+        : null;
+    if (pid === null) return [];
+
+    const data = await this.readRaw(9, pid, 4000);
+    if (!data || data.length < 3) return [];
+
+    // First byte is the count of following 16-bit words, which come in pairs.
+    const words: number[] = [];
+    for (let i = 1; i + 1 < data.length; i += 2) {
+      const hi = data[i];
+      const lo = data[i + 1];
+      if (hi === undefined || lo === undefined) break;
+      words.push(hi * 256 + lo);
+    }
+
+    const labels = pid === 0x08 ? SPARK_COUNTER_LABELS : COMPRESSION_COUNTER_LABELS;
+    const counters: { label: string; numerator: number; denominator: number }[] = [];
+
+    for (let pair = 0; pair * 2 + 1 < words.length; pair += 1) {
+      const numerator = words[pair * 2];
+      const denominator = words[pair * 2 + 1];
+      if (numerator === undefined || denominator === undefined) break;
+      counters.push({
+        label: labels[pair] ?? `Counter ${pair + 1}`,
+        numerator,
+        denominator,
+      });
+    }
+
+    return counters;
   }
 
   async readVehicleInfo(): Promise<VehicleInfo> {

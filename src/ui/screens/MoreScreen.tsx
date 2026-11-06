@@ -46,6 +46,9 @@ const GROUPS: { title: string; items: Item[] }[] = [
   {
     title: 'Diagnostics',
     items: [
+      { label: 'Vehicle health', note: 'What the readings mean together', route: 'Health', needsConnection: true },
+      { label: 'Monitor test results', note: 'The measurements behind each self-check', route: 'TestResults', needsConnection: true },
+      { label: 'Pre-purchase inspection', note: 'Checking a vehicle before buying it', route: 'Inspection', needsConnection: true },
       { label: 'Scan history', note: 'Every saved scan on this phone', route: 'History' },
       { label: 'Look up a code', note: 'Search by code number or words', route: 'CodeLookup' },
       { label: 'Emission readiness', note: 'On-board self-check status', route: 'Readiness', needsConnection: true },

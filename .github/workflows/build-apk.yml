@@ -108,22 +108,40 @@ jobs:
           ./gradlew assembleRelease --no-daemon --stacktrace \
             -Pandroid.compileSdkVersion="${ANDROID_COMPILE_SDK}"
 
-      - name: Name the APK by version and commit
+      # The build splits per architecture, so there is one APK per ABI rather
+      # than a single universal file. All of them are collected and named.
+      - name: Name the APKs by version, architecture and commit
         id: rename
         run: |
           VERSION=$(node -p "require('./app.json').expo.version")
           SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
-          SRC=android/app/build/outputs/apk/release/app-release.apk
-          DEST="obd-scout-${VERSION}-${SHORT_SHA}.apk"
-          cp "$SRC" "$DEST"
-          echo "path=$DEST" >> "$GITHUB_OUTPUT"
-          ls -lh "$DEST"
+          OUT=dist
+          mkdir -p "$OUT"
 
-      - name: Upload the APK
+          shopt -s nullglob
+          FOUND=0
+          for APK in android/app/build/outputs/apk/release/*.apk; do
+            NAME=$(basename "$APK" .apk)
+            # app-arm64-v8a-release -> arm64-v8a; app-release -> universal
+            ABI=$(echo "$NAME" | sed -E 's/^app-//; s/-release$//')
+            [ -z "$ABI" ] && ABI=universal
+            cp "$APK" "$OUT/obd-scout-${VERSION}-${ABI}-${SHORT_SHA}.apk"
+            FOUND=$((FOUND + 1))
+          done
+
+          if [ "$FOUND" -eq 0 ]; then
+            echo "No APK was produced by the build." >&2
+            exit 1
+          fi
+
+          echo "dir=$OUT" >> "$GITHUB_OUTPUT"
+          ls -lh "$OUT"
+
+      - name: Upload the APKs
         uses: actions/upload-artifact@v4
         with:
           name: obd-scout-apk
-          path: ${{ steps.rename.outputs.path }}
+          path: ${{ steps.rename.outputs.dir }}/*.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -131,28 +149,32 @@ jobs:
       # everywhere. Publishing the APK to an orphan branch as well makes it
       # retrievable over plain git, which is reachable anywhere the repo is.
       # The branch is rewritten each build so it never accumulates binaries.
-      - name: Publish the APK to the builds branch
+      - name: Publish the APKs to the builds branch
         run: |
-          APK="${{ steps.rename.outputs.path }}"
-          cp "$APK" /tmp/"$(basename "$APK")"
+          rm -rf /tmp/apks && mkdir -p /tmp/apks
+          cp "${{ steps.rename.outputs.dir }}"/*.apk /tmp/apks/
 
           git config user.name 'github-actions[bot]'
           git config user.email 'github-actions[bot]@users.noreply.github.com'
 
           git checkout --orphan builds-tmp
           git rm -rf --cached . >/dev/null 2>&1 || true
-          cp /tmp/*.apk .
+          cp /tmp/apks/*.apk .
 
           {
             echo "# Build output"
             echo
-            echo "APK built from commit \`${GITHUB_SHA}\` on $(date -u +'%Y-%m-%d %H:%M UTC')."
+            echo "Built from commit \`${GITHUB_SHA}\` on $(date -u +'%Y-%m-%d %H:%M UTC')."
             echo
-            echo "Signed with the debug keystore, so it installs by sideloading"
-            echo "but is not suitable for distribution through the Play Store."
+            echo "One APK per CPU architecture. Almost every phone made in the"
+            echo "last decade is \`arm64-v8a\`; \`armeabi-v7a\` is for older"
+            echo "32-bit devices."
+            echo
+            echo "Signed with the debug keystore, so these install by"
+            echo "sideloading but are not suitable for the Play Store."
           } > README.md
 
           git add -f ./*.apk README.md
-          git commit -q -m "APK from ${GITHUB_SHA:0:7}"
+          git commit -q -m "APKs from ${GITHUB_SHA:0:7}"
           git push -f origin builds-tmp:builds
           ls -lh ./*.apk

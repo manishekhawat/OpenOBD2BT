@@ -16,9 +16,41 @@ import {
 /** Mode 01 PIDs the simulated ECU answers. */
 const SUPPORTED_PIDS = [
   0x01, 0x03, 0x04, 0x05, 0x06, 0x07, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-  0x11, 0x1c, 0x1f, 0x20, 0x21, 0x2f, 0x30, 0x31, 0x33, 0x3c, 0x40, 0x42,
-  0x43, 0x44, 0x45, 0x46, 0x4c, 0x4d, 0x4e, 0x51, 0x5c, 0x5e,
+  0x11, 0x13, 0x14, 0x15, 0x1c, 0x1f, 0x20, 0x21, 0x2f, 0x30, 0x31, 0x33,
+  0x3c, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x4c, 0x4d, 0x4e, 0x51,
+  0x5c, 0x5e,
 ];
+
+/**
+ * Service 06 monitors the simulated ECU answers.
+ *
+ * The set tells a coherent story with the stored faults: cylinder 1 is
+ * misfiring, which matches P0301, and the catalyst margin is narrowing, which
+ * is how a converter looks before it sets P0420.
+ */
+const SUPPORTED_MIDS = [0x01, 0x02, 0x35, 0xa1, 0xa2, 0xa3, 0xa4];
+
+interface DemoTest {
+  tid: number;
+  uasid: number;
+  value: number;
+  min: number;
+  max: number;
+}
+
+const DEMO_TESTS: Record<number, DemoTest[]> = {
+  // Oxygen sensor bank 1 sensor 1 — switching voltage, comfortably in range.
+  0x01: [{ tid: 0x01, uasid: 0x0c, value: 0x0048, min: 0x0014, max: 0x005a }],
+  // Bank 1 sensor 2 — response time, well inside its limit.
+  0x02: [{ tid: 0x07, uasid: 0x10, value: 0x0096, min: 0x0000, max: 0x02bc }],
+  // Catalyst bank 1 — passing, but with the margin closing.
+  0x35: [{ tid: 0x01, uasid: 0x03, value: 0x0030, min: 0x0000, max: 0x004b }],
+  // Misfire counts: cylinder 1 is the one with a problem.
+  0xa1: [{ tid: 0x0b, uasid: 0x24, value: 0x0050, min: 0x0000, max: 0x0064 }],
+  0xa2: [{ tid: 0x0b, uasid: 0x24, value: 0x0002, min: 0x0000, max: 0x0064 }],
+  0xa3: [{ tid: 0x0b, uasid: 0x24, value: 0x0000, min: 0x0000, max: 0x0064 }],
+  0xa4: [{ tid: 0x0b, uasid: 0x24, value: 0x0001, min: 0x0000, max: 0x0064 }],
+};
 
 const DEMO_VIN = 'MA1TA2YS3P4567890';
 const DEMO_DTCS: [number, number][] = [
@@ -193,11 +225,48 @@ export class DemoTransport implements Transport {
         this.pending = [];
         this.clearedAt = Date.now();
         return frame([0x44]);
+      case '06':
+        return pid === undefined ? 'NO DATA' : this.mode06(pid);
       case '09':
         return pid === undefined ? 'NO DATA' : this.mode09(pid);
       default:
         return 'NO DATA';
     }
+  }
+
+  /**
+   * Service 06. Support bitmaps follow the same block chain as live
+   * parameters, and each supported monitor returns its own test records.
+   */
+  private mode06(mid: number): string {
+    const SUPPORT_BLOCKS = [0x00, 0x20, 0x40, 0x60, 0x80, 0xa0];
+
+    if (SUPPORT_BLOCKS.includes(mid)) {
+      const bitmap = supportBitmap(mid, SUPPORTED_MIDS);
+      // Set the chaining bit so the walk continues to the next block, except
+      // on the last one.
+      if (mid !== 0xa0) {
+        const last = bitmap[3] ?? 0;
+        bitmap[3] = last | 0x01;
+      }
+      return frame([0x46, mid, ...bitmap]);
+    }
+
+    const tests = DEMO_TESTS[mid];
+    if (!tests) return 'NO DATA';
+
+    const payload = [0x46];
+    for (const test of tests) {
+      payload.push(
+        mid,
+        test.tid,
+        test.uasid,
+        Math.floor(test.value / 256), test.value % 256,
+        Math.floor(test.min / 256), test.min % 256,
+        Math.floor(test.max / 256), test.max % 256,
+      );
+    }
+    return frame(payload);
   }
 
   private respondAt(command: string): string {
@@ -252,6 +321,14 @@ export class DemoTransport implements Transport {
     };
 
     if (pid === 0x00) return frame([0x49, 0x00, 0x55, 0x40, 0x00, 0x00]);
+    if (pid === 0x08) {
+      // In-use performance: how often each monitor completed against how often
+      // conditions allowed it to. Sixteen 16-bit counters.
+      const counters = [1200, 1350, 210, 240, 0, 0, 198, 240, 0, 0, 176, 230, 164, 230, 0, 0];
+      const bytes: number[] = [];
+      for (const value of counters) bytes.push(Math.floor(value / 256), value % 256);
+      return frame([0x49, 0x08, counters.length, ...bytes]);
+    }
     if (pid === 0x02) return frame([0x49, 0x02, 0x01, ...ascii(DEMO_VIN, 17)]);
     if (pid === 0x04) return frame([0x49, 0x04, 0x01, ...ascii('OBDSCOUTDEMO0001', 16)]);
     if (pid === 0x0a) return frame([0x49, 0x0a, 0x01, ...ascii('ECM-EngineControl', 20)]);
@@ -297,6 +374,18 @@ export class DemoTransport implements Transport {
         return u16(s.mafGs * 100);
       case 0x11:
         return [clamp((s.throttlePct * 255) / 100, 0, 255)];
+      case 0x13:
+        // Two sensors on bank 1, matching PIDs 0x14 and 0x15.
+        return [0x03];
+      case 0x14: {
+        // Upstream sensor, oscillating as a healthy one does in closed loop.
+        const seconds = (Date.now() - this.startedAt) / 1000;
+        const volts = 0.45 + Math.sin(seconds * 3) * 0.3;
+        return [clamp(volts * 200, 0, 255), clamp(128 + 3.1 * 1.28, 0, 255)];
+      }
+      case 0x15:
+        // Downstream sensor, steady — which is what a working catalyst gives.
+        return [clamp(0.62 * 200, 0, 255), 0xff];
       case 0x1c:
         return [0x06]; // EOBD
       case 0x1f:
@@ -313,6 +402,10 @@ export class DemoTransport implements Transport {
         return [99];
       case 0x3c:
         return u16((420 + s.loadPct * 2 + 40) * 10);
+      case 0x41:
+        // This drive cycle: nothing complete yet after a clear, otherwise the
+        // same picture as since-cleared.
+        return [0x00, 0x07, 0xe5, this.clearedAt ? 0xe5 : 0x21];
       case 0x42:
         return u16(s.voltage * 1000);
       case 0x43:

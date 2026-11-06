@@ -45,6 +45,22 @@ export interface PidDefinition {
   decode: (data: number[]) => number | null;
   /** Vehicle types this is worth offering on. Undefined means all. */
   only?: VehicleType[];
+  /**
+   * A second quantity carried in the same response — oxygen sensors report a
+   * voltage and a fuel trim together, for instance.
+   */
+  secondary?: {
+    name: string;
+    unit: string;
+    precision: number;
+    decode: (data: number[]) => number | null;
+  };
+  /**
+   * Set where the byte layout is documented but this app has not been able to
+   * confirm it against a vehicle. The UI marks these, because a confidently
+   * wrong number is worse than a flagged one.
+   */
+  unverified?: boolean;
 }
 
 const u8 = (d: number[], i: number): number | null => {
@@ -356,7 +372,7 @@ export const PID_DEFINITIONS: PidDefinition[] = [
     service: 1, pid: 0x7c, name: 'Diesel particulate filter temperature', short: 'DPF temp',
     unit: '°C', bytes: 2, min: -40, max: 6513.5, rate: 'slow', category: 'dpf',
     precision: 0, decode: (d) => { const v = u16(d, 1); return v === null ? null : v / 10 - 40; },
-    only: ['car', 'truck'],
+    only: ['car', 'truck'], unverified: true,
   }),
   def({
     service: 1, pid: 0x9d, name: 'Engine fuel rate (g/s)', short: 'Fuel rate g/s',
@@ -368,7 +384,163 @@ export const PID_DEFINITIONS: PidDefinition[] = [
     unit: 'km', bytes: 4, min: 0, max: 429496729.5, rate: 'slow', category: 'trip',
     precision: 1, decode: (d) => { const v = u32(d, 0); return v === null ? null : v / 10; },
   }),
+
+  // --- Oxygen sensors -------------------------------------------------------
+  // Narrowband sensors report voltage in A and the short-term trim they are
+  // driving in B. A trim byte of 0xFF means the sensor is not used for trim.
+  ...oxygenSensors(),
+
+  // Wide-range sensors report an equivalence ratio across A and B, with a
+  // voltage across C and D.
+  ...wideRangeOxygenSensors(),
+
+  def({
+    service: 1, pid: 0x32, name: 'Evaporative system vapour pressure', short: 'EVAP press',
+    unit: 'Pa', bytes: 2, min: -8192, max: 8191.75, rate: 'slow', category: 'emissions',
+    precision: 2,
+    decode: (d) => {
+      const v = u16(d, 0);
+      if (v === null) return null;
+      // Signed across the full 16 bits, quarter-Pascal resolution.
+      return (v > 0x7fff ? v - 0x10000 : v) / 4;
+    },
+  }),
+  def({
+    service: 1, pid: 0x53, name: 'Absolute evaporative system vapour pressure', short: 'EVAP abs',
+    unit: 'kPa', bytes: 2, min: 0, max: 327.675, rate: 'slow', category: 'emissions',
+    precision: 3, decode: (d) => { const v = u16(d, 0); return v === null ? null : v / 200; },
+  }),
+  def({
+    service: 1, pid: 0x55, name: 'Short term secondary oxygen trim, bank 1', short: 'ST sec B1',
+    unit: '%', bytes: 2, min: -100, max: 99.2, rate: 'slow', category: 'fuel',
+    precision: 1, decode: trim,
+  }),
+  def({
+    service: 1, pid: 0x56, name: 'Long term secondary oxygen trim, bank 1', short: 'LT sec B1',
+    unit: '%', bytes: 2, min: -100, max: 99.2, rate: 'slow', category: 'fuel',
+    precision: 1, decode: trim,
+  }),
+  def({
+    service: 1, pid: 0x59, name: 'Fuel rail absolute pressure', short: 'Rail abs',
+    unit: 'kPa', bytes: 2, min: 0, max: 655350, rate: 'slow', category: 'fuel',
+    precision: 0, decode: (d) => { const v = u16(d, 0); return v === null ? null : v * 10; },
+  }),
+
+  // --- Diesel after-treatment ----------------------------------------------
+  def({
+    service: 1, pid: 0x9b, name: 'Diesel exhaust fluid tank level', short: 'AdBlue',
+    unit: '%', bytes: 4, min: 0, max: 100, rate: 'slow', category: 'dpf',
+    precision: 0,
+    decode: (d) => { const a = u8(d, 2); return a === null ? null : (a * 100) / 255; },
+    only: ['car', 'truck'], unverified: true,
+  }),
+  def({
+    service: 1, pid: 0xa4, name: 'Transmission gear ratio', short: 'Gear ratio',
+    unit: '', bytes: 4, min: 0, max: 65.535, rate: 'medium', category: 'engine',
+    precision: 3,
+    decode: (d) => { const v = u16(d, 2); return v === null ? null : v / 1000; },
+    unverified: true,
+  }),
 ];
+
+/**
+ * Narrowband oxygen sensors, PIDs 0x14–0x1B: four sensors on each of two banks.
+ * Generated rather than written out, because the layout is identical and the
+ * bank and sensor numbers follow directly from the PID.
+ */
+function oxygenSensors(): PidDefinition[] {
+  const sensors: PidDefinition[] = [];
+  for (let index = 0; index < 8; index += 1) {
+    const pid = 0x14 + index;
+    const bank = Math.floor(index / 4) + 1;
+    const sensor = (index % 4) + 1;
+    sensors.push(
+      def({
+        service: 1,
+        pid,
+        name: `Oxygen sensor ${sensor} voltage, bank ${bank}`,
+        short: `O2 B${bank}S${sensor}`,
+        unit: 'V',
+        bytes: 2,
+        min: 0,
+        max: 1.275,
+        rate: 'fast',
+        category: 'emissions',
+        precision: 3,
+        decode: (d) => { const a = u8(d, 0); return a === null ? null : a / 200; },
+        secondary: {
+          name: `Short term fuel trim from sensor ${sensor}, bank ${bank}`,
+          unit: '%',
+          precision: 1,
+          decode: (d) => {
+            const b = u8(d, 1);
+            // 0xFF means this sensor does not drive trim.
+            if (b === null || b === 0xff) return null;
+            return ((b - 128) * 100) / 128;
+          },
+        },
+        only: bank === 2 ? ['car', 'truck'] : undefined,
+      }),
+    );
+  }
+  return sensors;
+}
+
+/**
+ * Wide-range (air-fuel ratio) sensors, PIDs 0x24–0x2B. These report an
+ * equivalence ratio, where 1.000 is the ideal mixture — below is rich, above
+ * is lean — which is far more readable than a raw voltage.
+ */
+function wideRangeOxygenSensors(): PidDefinition[] {
+  const sensors: PidDefinition[] = [];
+  for (let index = 0; index < 8; index += 1) {
+    const pid = 0x24 + index;
+    const bank = Math.floor(index / 4) + 1;
+    const sensor = (index % 4) + 1;
+    sensors.push(
+      def({
+        service: 1,
+        pid,
+        name: `Oxygen sensor ${sensor} equivalence ratio, bank ${bank}`,
+        short: `λ B${bank}S${sensor}`,
+        unit: 'λ',
+        bytes: 4,
+        min: 0,
+        max: 2,
+        rate: 'fast',
+        category: 'emissions',
+        precision: 3,
+        decode: (d) => { const v = u16(d, 0); return v === null ? null : v / 32768; },
+        secondary: {
+          name: `Oxygen sensor ${sensor} voltage, bank ${bank}`,
+          unit: 'V',
+          precision: 3,
+          decode: (d) => { const v = u16(d, 2); return v === null ? null : v / 8192; },
+        },
+        only: bank === 2 ? ['car', 'truck'] : undefined,
+      }),
+    );
+  }
+  return sensors;
+}
+
+/**
+ * Mode 01 PID 0x13 — which oxygen sensors the vehicle has.
+ *
+ * One bit per sensor, in the same order as PIDs 0x14 to 0x1B, so a set bit
+ * maps directly onto the PID that reads that sensor. Saves polling sensors
+ * that will never answer.
+ */
+export function decodeOxygenSensorsPresent(data: number[]): number[] {
+  const a = data[0];
+  if (a === undefined) return [];
+
+  const present: number[] = [];
+  for (let bit = 0; bit < 8; bit += 1) {
+    if ((a & (1 << bit)) !== 0) present.push(0x14 + bit);
+  }
+  return present;
+}
 
 const BY_PID = new Map<number, PidDefinition>(
   PID_DEFINITIONS.map((d) => [d.pid, d]),
