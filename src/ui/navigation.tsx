@@ -42,6 +42,7 @@ import { TripDetailScreen } from './screens/TripDetailScreen';
 import { FuelScreen } from './screens/FuelScreen';
 import { CodeLookupScreen } from './screens/CodeLookupScreen';
 import { AdapterLogScreen } from './screens/AdapterLogScreen';
+import { DiagnosticLogScreen } from './screens/DiagnosticLogScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { AboutScreen } from './screens/AboutScreen';
 
@@ -67,6 +68,7 @@ export type RootStackParamList = {
   Fuel: undefined;
   CodeLookup: undefined;
   AdapterLog: undefined;
+  DiagnosticLog: undefined;
   Settings: undefined;
   About: undefined;
 };
@@ -189,6 +191,7 @@ export function Navigation() {
         <Stack.Screen name="Fuel" component={FuelScreen} options={{ title: 'Fuel' }} />
         <Stack.Screen name="CodeLookup" component={CodeLookupScreen} options={{ title: 'Look up a code' }} />
         <Stack.Screen name="AdapterLog" component={AdapterLogScreen} options={{ title: 'Adapter log' }} />
+        <Stack.Screen name="DiagnosticLog" component={DiagnosticLogScreen} options={{ title: 'Diagnostic log' }} />
         <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: 'Settings' }} />
         <Stack.Screen name="About" component={AboutScreen} options={{ title: 'About' }} />
       </Stack.Navigator>

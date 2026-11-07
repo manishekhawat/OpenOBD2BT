@@ -17,6 +17,7 @@ import {
 import { decodeDtcPayload, type DecodedDtc, type DtcOrigin } from './dtc';
 import { decodeReadiness, type ReadinessReport } from './monitors';
 import { decodeTestResults, MID_SUPPORT_BLOCKS, type TestResult } from './mode06';
+import { log } from '@/features/log';
 import {
   decodeSupportBitmap,
   reportsNextBlock,
@@ -164,6 +165,14 @@ export class ObdSession {
   private addTrace(direction: TraceEntry['direction'], text: string): void {
     this.trace = [...this.trace.slice(-(MAX_TRACE - 1)), { direction, text, at: Date.now() }];
     for (const l of this.traceListeners) l(this.trace);
+
+    // Mirror the adapter conversation into the on-disk log, so a session that
+    // ends in a crash still shows what was being sent when it happened.
+    log(
+      direction === 'info' ? 'info' : direction,
+      'obd',
+      text.replace(/[\r\n]+/g, ' ').trim(),
+    );
   }
 
   clearTrace(): void {

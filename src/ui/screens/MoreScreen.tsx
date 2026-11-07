@@ -67,6 +67,7 @@ const GROUPS: { title: string; items: Item[] }[] = [
     items: [
       { label: 'Settings', note: 'Theme, units, language and adapter behaviour', route: 'Settings' },
       { label: 'Adapter log', note: 'The raw conversation, for troubleshooting', route: 'AdapterLog' },
+      { label: 'Diagnostic log', note: 'What the app did, kept across crashes', route: 'DiagnosticLog' },
       { label: 'About', note: 'Version, data sources and licences', route: 'About' },
     ],
   },

@@ -19,6 +19,7 @@ import { useLive } from '@/state/live';
 import { useVehicles, describeVehicle } from '@/state/vehicles';
 import { useSettings } from '@/state/settings';
 import { format } from '@/features/units';
+import { previousSessionCrashed } from '@/features/log';
 
 import {
   Body,
@@ -98,6 +99,22 @@ export function HomeScreen() {
 
   return (
     <Screen refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={palette.muted} />}>
+      {previousSessionCrashed() ? (
+        <Tappable
+          onPress={() => navigation.navigate('DiagnosticLog')}
+          accessibilityLabel="The app closed unexpectedly last time. Open the diagnostic log."
+        >
+          <Panel style={{ marginTop: space.gap, borderColor: palette.amber, gap: 4 }}>
+            <Title style={{ fontSize: type.body, color: palette.amber }}>
+              The app closed unexpectedly last time
+            </Title>
+            <Label>
+              A log of what it was doing was kept. Tap to read it or send it on.
+            </Label>
+          </Panel>
+        </Tappable>
+      ) : null}
+
       <StatusStrip verdict={verdict} />
 
       <View style={{ gap: space.base, marginTop: space.wide }}>

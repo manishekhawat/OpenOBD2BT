@@ -7,7 +7,8 @@
  */
 
 import { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { AppState, Platform, View } from 'react-native';
+import Constants from 'expo-constants';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
@@ -18,9 +19,17 @@ import { useVehicles } from '@/state/vehicles';
 import { Navigation } from '@/ui/navigation';
 import { Body, Title } from '@/ui/components/primitives';
 import { ErrorBoundary, installGlobalErrorHandler } from '@/ui/components/ErrorBoundary';
+import { endLoggingCleanly, log, startLogging } from '@/features/log';
 import { space, usePalette } from '@/ui/theme';
 
-// Installed before anything renders, so an error during startup is caught too.
+// Logging starts before anything else, so a crash during startup is still
+// recorded, and the handler is installed before the first render.
+startLogging({
+  version: Constants.expoConfig?.version ?? 'unknown',
+  platform: Platform.OS,
+  androidApi: Platform.Version,
+  architecture: 'bridgeless',
+});
 installGlobalErrorHandler();
 
 export default function App() {
@@ -28,15 +37,28 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const loadVehicles = useVehicles((s) => s.load);
 
+  // Backgrounding is the closest thing to a clean exit an app gets, so it is
+  // what marks the log as having ended properly. A session without that mark
+  // is one that crashed.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background') endLoggingCleanly();
+    });
+    return () => subscription.remove();
+  }, []);
+
   useEffect(() => {
     (async () => {
+      log('info', 'app', 'opening the local database');
       await getDb();
       // A trip left open by the app being killed mid-recording has no end time
       // and no useful summary, so it is dropped rather than shown as a stub.
       await discardUnfinishedTrips();
       await loadVehicles();
+      log('info', 'app', 'startup complete');
       setReady(true);
     })().catch((err: unknown) => {
+      log('error', 'app', `startup failed: ${err instanceof Error ? err.message : String(err)}`);
       setError(err instanceof Error ? err.message : 'The local database could not be opened.');
       // Still let the app run: fault lookup and the demo work without storage.
       setReady(true);

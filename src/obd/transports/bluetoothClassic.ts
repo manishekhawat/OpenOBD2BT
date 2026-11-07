@@ -19,6 +19,7 @@
 
 import { PermissionsAndroid, Platform } from 'react-native';
 
+import { log } from '@/features/log';
 import * as ObdBluetooth from '../../../modules/obd-bluetooth';
 import {
   type AdapterCandidate,
@@ -112,7 +113,13 @@ export class BluetoothClassicTransport implements Transport {
   }
 
   async open(events: TransportEvents): Promise<void> {
+    // Each step is written to disk before it runs. If the process dies inside
+    // a native call, the last line in the log names the call it died in.
+    log('info', 'bt', `open: ${this.label} (${this.id})`);
+
+    log('info', 'bt', 'checking the native module is present');
     if (!ObdBluetooth.isAvailable()) {
+      log('error', 'bt', 'native module absent');
       throw new TransportError(
         this.kind,
         'Bluetooth support is missing from this build',
@@ -120,7 +127,9 @@ export class BluetoothClassicTransport implements Transport {
       );
     }
 
+    log('info', 'bt', 'checking the connect permission');
     if (!(await hasConnectPermission())) {
+      log('error', 'bt', 'connect permission not granted');
       throw new TransportError(
         this.kind,
         'Bluetooth permission has not been granted',
@@ -128,7 +137,9 @@ export class BluetoothClassicTransport implements Transport {
       );
     }
 
+    log('info', 'bt', 'checking Bluetooth is switched on');
     if (!ObdBluetooth.isEnabled()) {
+      log('error', 'bt', 'Bluetooth is off');
       throw new TransportError(
         this.kind,
         'Bluetooth is turned off',
@@ -137,19 +148,24 @@ export class BluetoothClassicTransport implements Transport {
     }
 
     // Listeners first: a reply can arrive the instant the socket opens.
+    log('info', 'bt', 'attaching the data and close listeners');
     this.dataSub = ObdBluetooth.onData(({ data }) => {
       events.onData(data);
     });
     this.closeSub = ObdBluetooth.onClose(({ reason }) => {
+      log('warn', 'bt', `link closed by the adapter: ${reason}`);
       this.open_ = false;
       events.onClose(reason);
     });
 
     try {
+      log('info', 'bt', `calling native connect(${this.id}) — secure first`);
       const { mode } = await ObdBluetooth.connect(this.id, true);
       this.mode = mode;
       this.open_ = true;
+      log('info', 'bt', `connected using the ${mode} method`);
     } catch (err) {
+      log('error', 'bt', `connect failed: ${err instanceof Error ? err.message : String(err)}`);
       await this.close();
       throw new TransportError(
         this.kind,
@@ -167,6 +183,7 @@ export class BluetoothClassicTransport implements Transport {
   }
 
   async close(): Promise<void> {
+    log('info', 'bt', 'closing the link');
     this.open_ = false;
 
     this.dataSub?.remove();
