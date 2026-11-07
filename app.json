@@ -37,7 +37,10 @@
           "android": {
             "minSdkVersion": 24,
             "compileSdkVersion": 37,
-            "targetSdkVersion": 36
+            "targetSdkVersion": 36,
+            "enableMinifyInReleaseBuilds": false,
+            "enableShrinkResources": false,
+            "extraProguardRules": "# Expo modules are found and instantiated reflectively, so R8 cannot see\n# that they are used and will rename or remove them.\n-keep class * extends expo.modules.kotlin.modules.Module { *; }\n-keep class expo.modules.obdbluetooth.** { *; }\n-keepclassmembers class * extends expo.modules.kotlin.modules.Module {\n  public <init>(...);\n}\n"
           }
         }
       ],

@@ -12,3 +12,14 @@
 -keep class com.facebook.react.turbomodule.** { *; }
 
 # Add any project specific keep options here:
+
+# @generated begin expo-build-properties - expo prebuild (DO NOT MODIFY)
+# Expo modules are found and instantiated reflectively, so R8 cannot see
+# that they are used and will rename or remove them.
+-keep class * extends expo.modules.kotlin.modules.Module { *; }
+-keep class expo.modules.obdbluetooth.** { *; }
+-keepclassmembers class * extends expo.modules.kotlin.modules.Module {
+  public <init>(...);
+}
+
+# @generated end expo-build-properties
