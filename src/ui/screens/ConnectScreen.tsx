@@ -294,24 +294,21 @@ function ClassicPanel({
         )}
       </Panel>
 
-      <Row gap={space.small}>
-        <Button label="Refresh paired" onPress={onRefresh} tone="neutral" style={{ flex: 1 }} />
-        <Button
-          label={scanning ? 'Scanning' : 'Scan for new'}
-          onPress={onDiscover}
-          tone="neutral"
-          busy={scanning}
-          style={{ flex: 1 }}
-        />
-      </Row>
+      <Button label="Refresh paired devices" onPress={onRefresh} tone="neutral" />
 
       <Panel tone="high" style={{ gap: space.small }}>
         <Title style={{ fontSize: type.body }}>If it pairs but will not connect</Title>
         <Body color={palette.muted}>
-          Unplug the adapter for ten seconds and plug it back in — these hold the last connection
-          open. Close any other OBD app, and make sure no second phone nearby is reconnecting to it.
-          Switch the ignition on. If it still refuses, the adapter may be a Bluetooth LE type, which
-          Android will pair but never open a serial link to; try the Bluetooth LE tab.
+          Connecting tries three ways in turn — a secure serial socket, an insecure one, then a
+          direct connection to channel 1 — so an adapter with a malformed service record is handled
+          without you doing anything.
+        </Body>
+        <Body color={palette.muted}>
+          If all three fail: unplug the adapter for ten seconds, since these hold the last
+          connection open. Close any other OBD app, and check no second phone nearby is
+          reconnecting to it. Switch the ignition on. If it still refuses, the adapter may be a
+          Bluetooth LE type, which Android will pair but never open a serial link to — try the
+          Bluetooth LE tab.
         </Body>
       </Panel>
     </View>

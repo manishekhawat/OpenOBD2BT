@@ -12,8 +12,6 @@ import { session, type SessionStatus, type TraceEntry } from '@/obd/session';
 import type { AdapterCandidate, Transport, TransportKind } from '@/obd/transport';
 import {
   BluetoothClassicTransport,
-  cancelDiscovery,
-  discoverClassic,
   isBluetoothEnabled,
   isLikelyBleOnly,
   listPaired,
@@ -103,12 +101,10 @@ export const useConnection = create<ConnectionState>((set, get) => {
       set({ scanning: true, lastError: null });
       try {
         if (kind === 'bt-classic') {
-          const paired = await listPaired().catch(() => []);
-          const found = await discoverClassic();
-          // Merge, preferring the paired record where both exist.
-          const byId = new Map(found.map((c) => [c.id, c]));
-          for (const p of paired) byId.set(p.id, p);
-          set({ candidates: [...byId.values()] });
+          // Classic adapters have to be paired in Android settings before they
+          // will accept a serial connection, so the paired list is the whole
+          // story — there is nothing useful an unpaired scan would add.
+          set({ candidates: await listPaired() });
         } else if (kind === 'ble') {
           set({ candidates: await scanBle() });
         }
@@ -120,7 +116,8 @@ export const useConnection = create<ConnectionState>((set, get) => {
     },
 
     stopDiscovery() {
-      void cancelDiscovery();
+      // Only Bluetooth LE scans: Classic adapters come from the paired list,
+      // which is a single read with nothing to cancel.
       stopBleScan();
       set({ scanning: false });
     },
